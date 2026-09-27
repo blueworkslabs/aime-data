@@ -25,6 +25,8 @@ KNOWN = (
     ("Kaliberg", 52.3127, 9.6476), ("Burgbergturm", 52.3146, 9.5856),
     ("Aegidienkirche", 52.3706, 9.7392), ("Marienburg", 52.1737, 9.7701),
     ("Herrenhausen", 52.3906, 9.6989), ("Gehrdener Berg", 52.3029, 9.5890),
+    ("Rathausturm", 52.3672, 9.7373), ("Heizkraftwerk Linden", 52.3731, 9.7143),
+    ("VW Tower", 52.3799, 9.7411),  # Telemoritz, Q1306561; not the Hochhaus Lister Tor next to it
 )
 RADIUS_M = 1500
 
