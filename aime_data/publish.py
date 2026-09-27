@@ -76,7 +76,8 @@ def relabel(public, index, revision):
 def plan(public, published):
     new, old = load_index(public), load_index(published)
     if old:
-        if new["release"] < old["release"]:
+        release_order = lambda release: (release.split(".")[0], int(release.split(".")[1]))
+        if release_order(new["release"]) < release_order(old["release"]):
             raise Refused(f"release {new['release']} is older than the published {old['release']}; no rollback")
         if new["release"] == old["release"]:
             if same_content(public, new, published, old):
@@ -87,7 +88,8 @@ def plan(public, published):
         prev = os.path.join(published, "v1", old["dataset"])
         if not os.path.isdir(prev):
             raise Refused(f"published dataset {old['dataset']} is missing from pages")
-        shutil.copytree(prev, os.path.join(public, "v1", old["dataset"]))
+        # A dry run (or failed push) may already have prepared this directory.
+        shutil.copytree(prev, os.path.join(public, "v1", old["dataset"]), dirs_exist_ok=True)
     errs, _ = validate(public)
     if errs:
         raise Refused("; ".join(errs[:5]))

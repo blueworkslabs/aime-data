@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import unittest
 from aime_data.cells import write
+from aime_data.publish import plan, Refused
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,6 +30,11 @@ class Publication(unittest.TestCase):
                 if public.exists():
                     shutil.rmtree(public)
                 write(str(public), release, built, {(52, 9): [[name, 'tower', 52.5, 9.5, 0, 1.0, 8]]})
+                if success:
+                    for _ in range(2):
+                        preview = subprocess.run(['bash', str(ROOT / 'scripts/publish.sh'), str(public), '--dry-run'],
+                                                 cwd=repo, env=env, capture_output=True, text=True)
+                        self.assertEqual(preview.returncode, 0, preview.stdout + preview.stderr)
                 result = subprocess.run(['bash', str(ROOT / 'scripts/publish.sh'), str(public)], cwd=repo, env=env,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
@@ -67,6 +73,16 @@ class Publication(unittest.TestCase):
             run('git', 'remote', 'set-url', 'origin', str(root / 'missing.git'))
             publish('2026-10-23.1', success=False)
             self.assertEqual(head(), before)
+
+    def test_upstream_release_suffix_is_numeric(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            public, old = Path(tmp) / 'public', Path(tmp) / 'old'
+            data = {(52, 9): [['Tower', 'tower', 52.5, 9.5, 0, 1.0, 8]]}
+            write(old, '2026-09-23.9', '2026-09-27T08:00:00Z', data)
+            write(public, '2026-09-23.10', '2026-09-27T08:00:00Z', data)
+            self.assertEqual(plan(public, old), ('publish', '2026-09-23.10-r1'))
+            with self.assertRaises(Refused):
+                plan(old, public)
 
 
 if __name__ == '__main__':
