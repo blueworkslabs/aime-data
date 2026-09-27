@@ -4,6 +4,7 @@ import math
 import os
 
 from . import contract as C
+from .declination import declination
 from .rules import record
 
 
@@ -44,7 +45,7 @@ def write(public, release, built, grouped, coverage=C.COVERAGE, revision=1):
     for (lat, lon) in sorted(grouped):
         name = C.cell_name(lat, lon)
         body = dumps({"schema": C.SCHEMA, "release": release, "revision": revision, "cell": [lat, lon],
-                      "f": grouped[(lat, lon)]})
+                      "declination": declination(lat, lon, release), "f": grouped[(lat, lon)]})
         data = body.encode()
         if len(data) >= C.MAX_CELL_BYTES:
             raise ValueError(f"cell {name} is {len(data)} bytes, limit {C.MAX_CELL_BYTES}")

@@ -22,7 +22,7 @@ RELEASE = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
 CELL = re.compile(r"^(-?\d+)_(-?\d+)$")
 INDEX_KEYS = {"schema", "release", "revision", "dataset", "built", "cellDeg", "coverage", "path", "cells",
               "license", "attribution", "kinds"}
-CELL_KEYS = {"schema", "release", "revision", "cell", "f"}
+CELL_KEYS = {"schema", "release", "revision", "cell", "declination", "f"}
 
 
 def read(path, mode="r"):
@@ -85,6 +85,10 @@ def validate_cell(path, index):
         errs.append(f"{name}: release {doc['release']!r} does not match the index")
     if doc["revision"] != index["revision"]:
         errs.append(f"{name}: revision {doc['revision']!r} does not match the index")
+    d = doc["declination"]
+    if isinstance(d, bool) or not isinstance(d, (int, float)) or not math.isfinite(d) or not -180 <= d <= 180 \
+            or not decimals_ok(d, 1):
+        errs.append(f"{name}: declination {d!r} must be degrees east in -180–180, one decimal")
     if doc["cell"] != [lat0, lon0]:
         errs.append(f"{name}: cell {doc['cell']!r} does not match the file name")
     f = doc["f"]
