@@ -12,23 +12,15 @@ COVERAGE = ("DE", "AT")
 COUNTRY_BOXES = {"DE": (5.5, 47.0, 15.5, 55.5), "AT": (9.3, 46.2, 17.4, 49.2)}
 
 TERRAIN = ("peak", "hill", "volcano")
-STRUCTURE_POINTS = (
+# Allowed kinds (validation and labels only; position uncertainty is per feature).
+KINDS = sorted(TERRAIN + (
     "tower", "observation", "communication_tower", "mast", "bell_tower", "water_tower",
     "watchtower", "minaret", "lighthouse", "windmill", "chimney", "radar",
-)
-BUILDING_CENTROIDS = (
     "church", "cathedral", "chapel", "mosque", "synagogue", "temple", "monastery",
     "castle", "ruins", "fort", "tall_building", "gasometer", "cooling",
-)
-PLACES_POINTS = ("monument", "memorial")
-LARGE_STRUCTURES = ("bridge", "dam")
-
-KINDS = {
-    **{k: {"placementM": 8} for k in TERRAIN + STRUCTURE_POINTS},
-    **{k: {"placementM": 25} for k in BUILDING_CENTROIDS},
-    **{k: {"placementM": 30} for k in PLACES_POINTS},
-    **{k: {"placementM": 50} for k in LARGE_STRUCTURES},
-}
+    "monument", "memorial", "bridge", "dam",
+))
+P_MIN, P_MAX = 5, 1000  # per-feature position uncertainty p, metres
 
 HEADERS = """/v1/index.json
   Cache-Control: public, max-age=3600
@@ -42,3 +34,8 @@ HEADERS = """/v1/index.json
 def cell_name(lat, lon):
     """Integer south-west corner, e.g. 50_8, 47_-1, -34_18."""
     return f"{lat}_{lon}"
+
+
+def dataset_name(release, revision):
+    """Published dataset directory, e.g. 2026-09-23.1-r1."""
+    return f"{release}-r{revision}"

@@ -34,15 +34,17 @@ def group(features, coverage_cells):
     return out
 
 
-def write(public, release, built, grouped, coverage=C.COVERAGE):
-    """Write v1/index.json, the release's cells, _headers and index.html.
+def write(public, release, built, grouped, coverage=C.COVERAGE, revision=1):
+    """Write v1/index.json, the dataset's cells, _headers and index.html.
     Returns the index dict. Raises if a cell reaches MAX_CELL_BYTES."""
-    rel_dir = os.path.join(public, "v1", release, "cells")
+    dataset = C.dataset_name(release, revision)
+    rel_dir = os.path.join(public, "v1", dataset, "cells")
     os.makedirs(rel_dir, exist_ok=True)
     names = []
     for (lat, lon) in sorted(grouped):
         name = C.cell_name(lat, lon)
-        body = dumps({"schema": C.SCHEMA, "release": release, "cell": [lat, lon], "f": grouped[(lat, lon)]})
+        body = dumps({"schema": C.SCHEMA, "release": release, "revision": revision, "cell": [lat, lon],
+                      "f": grouped[(lat, lon)]})
         data = body.encode()
         if len(data) >= C.MAX_CELL_BYTES:
             raise ValueError(f"cell {name} is {len(data)} bytes, limit {C.MAX_CELL_BYTES}")
@@ -52,10 +54,12 @@ def write(public, release, built, grouped, coverage=C.COVERAGE):
     index = {
         "schema": C.SCHEMA,
         "release": release,
+        "revision": revision,
+        "dataset": dataset,
         "built": built,
         "cellDeg": C.CELL_DEG,
         "coverage": list(coverage),
-        "path": f"{release}/cells/",
+        "path": f"{dataset}/cells/",
         "cells": names,
         "license": C.LICENSE,
         "attribution": C.ATTRIBUTION,
@@ -66,7 +70,7 @@ def write(public, release, built, grouped, coverage=C.COVERAGE):
     with open(os.path.join(public, "_headers"), "w", encoding="utf-8") as fh:
         fh.write(C.HEADERS)
     with open(os.path.join(public, "index.html"), "w", encoding="utf-8") as fh:
-        fh.write(LANDING.format(release=release, built=built, cells=len(names),
+        fh.write(LANDING.format(dataset=dataset, built=built, cells=len(names),
                                 features=sum(len(v) for v in grouped.values()),
                                 coverage=", ".join(coverage), attribution=C.ATTRIBUTION))
     return index
@@ -80,7 +84,7 @@ LANDING = """<!doctype html>
 <h1>Aimé landmark data</h1>
 <p>Pre-built landmark cells for the Aimé module of
 <a href="https://github.com/blueworkslabs/construct">Construct</a>.
-Release {release}, built {built}: {features} landmarks in {cells} cells of 1°, coverage {coverage}.</p>
+Dataset {dataset} (Overture release and data revision), built {built}: {features} landmarks in {cells} cells of 1°, coverage {coverage}.</p>
 <p>Data: {attribution}. Licensed under the
 <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License 1.0</a>.
 Index: <a href="v1/index.json">v1/index.json</a>.</p>

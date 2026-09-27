@@ -5,16 +5,17 @@ the network. Each theme function takes one extracted row and returns a feature
 dict or None; `select` applies the cross-theme rules and the dedupe.
 
 Row shapes (see extract.py):
-  land       {name, cls, elevation, wikidata, lat, lon}
-  infra      {name, cls, height, wikidata, man_made, historic, lat, lon}
-  buildings  {name, cls, height, lat, lon}
-  places     {name, category, confidence, lat, lon}
+  land       {name, cls, elevation, wikidata, lat, lon, dx, dy}
+  infra      {name, cls, height, wikidata, man_made, historic, lat, lon, dx, dy}
+  buildings  {name, cls, height, lat, lon, dx, dy}
+  places     {name, category, confidence, lat, lon, dx, dy}
+(lat, lon) is the Overture bbox centre, (dx, dy) its extent in degrees.
 """
 import math
 import re
 import unicodedata
 
-from .contract import KINDS, NAME_MAX, TERRAIN, W_MAX, W_MIN
+from .contract import KINDS, NAME_MAX, P_MAX, P_MIN, TERRAIN, W_MAX, W_MIN
 
 PROVENANCE = ("land", "infra", "buildings", "places")
 
@@ -57,9 +58,13 @@ WORD_KINDS = (
 )
 BRIDGE_WORDS = ("brücke", "bruecke", "bridge", "viadukt", "viaduct")
 
+# Position uncertainty floor per source, metres (README "Position uncertainty").
+P_FLOOR = {"land": 8, "infra": 8, "buildings": 10, "places": 60, "places:church": 60, "places:mountain": 250}
+
 CHURCH_CLEARANCE_M = 250
 MOUNTAIN_CLEARANCE_M = 2000
 DEDUPE_M = 400
+M_PER_DEG = 111_195
 
 
 def norm(s):
@@ -81,10 +86,21 @@ def num(v):
     return None if v is None or (isinstance(v, float) and math.isnan(v)) else v
 
 
+def half_diagonal_m(row):
+    """Half the diagonal of the row's bbox in metres (0 for points)."""
+    dx, dy = num(row.get("dx")) or 0, num(row.get("dy")) or 0
+    return 0.5 * math.hypot(dx * M_PER_DEG * math.cos(math.radians(row["lat"])), dy * M_PER_DEG)
+
+
+def uncertainty(src, row):
+    """p = clamp(max(floor(source), 0.5 × half-diagonal), 5, 1000), rounded up."""
+    return int(math.ceil(min(P_MAX, max(P_MIN, P_FLOOR[src], 0.5 * half_diagonal_m(row))) - 1e-9))
+
+
 def feature(name, kind, row, src, e=None, wikidata=None):
     assert kind in KINDS, kind
     return {"name": name, "kind": kind, "lat": row["lat"], "lon": row["lon"], "e": num(e),
-            "wikidata": wikidata or None, "src": src}
+            "wikidata": wikidata or None, "src": src, "p": uncertainty(src, row)}
 
 
 def land(row):
@@ -162,8 +178,8 @@ def places(row):
 
 def metres(a, b):
     """Equirectangular distance in metres; exact enough below a few km."""
-    dy = (a["lat"] - b["lat"]) * 111_195
-    dx = (a["lon"] - b["lon"]) * 111_195 * math.cos(math.radians((a["lat"] + b["lat"]) / 2))
+    dy = (a["lat"] - b["lat"]) * M_PER_DEG
+    dx = (a["lon"] - b["lon"]) * M_PER_DEG * math.cos(math.radians((a["lat"] + b["lat"]) / 2))
     return math.hypot(dx, dy)
 
 
@@ -242,7 +258,8 @@ def select(rows):
     stats["places_dropped_near_theme_twin"] = dropped
 
     # Dedupe: same normalised name within 400 m; the first by provenance wins and
-    # fills its missing elevation/height and Wikidata id from the others.
+    # fills its missing elevation/height and Wikidata id from the others. It
+    # keeps its own position and p, so a merge never lowers p.
     kept, index, merged = [], Near(key=lambda f: norm(f["name"])), 0
     for src in PROVENANCE:
         for f in picked[src]:
@@ -262,7 +279,7 @@ def select(rows):
 
 
 def record(f):
-    """Compact contract record [name, kind, lat, lon, e, w]."""
+    """Compact contract record [name, kind, lat, lon, e, w, p]."""
     e = f["e"]
     return [f["name"], f["kind"], round(f["lat"], 5), round(f["lon"], 5),
-            int(round(e)) if e else 0, f["w"]]
+            int(round(e)) if e else 0, f["w"], f["p"]]

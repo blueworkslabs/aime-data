@@ -151,6 +151,53 @@ class CrossThemeRules(unittest.TestCase):
         self.assertEqual([R.record(f) for f in a], [R.record(f) for f in b])
 
 
+class PositionUncertainty(unittest.TestCase):
+    """p = clamp(max(floor(source), 0.5 × half-diagonal), 5, 1000), rounded up."""
+
+    def test_floors_by_source(self):
+        rows = {
+            "land": [row(name="Benther Berg", cls="peak", elevation=173, lat=52.3386, lon=9.6166)],
+            "infra": [row(name="Telemax", cls="communication_tower", height=282, lat=52.393, lon=9.800)],
+            "buildings": [row(name="Marktkirche", cls="church", lat=52.3718, lon=9.7353)],
+            "places": [row(name="Aegidienkirche", category="christian_place_of_worship", confidence=0.99,
+                           lat=52.3706, lon=9.7392),
+                       row(name="Denkmal am Berg", category="monument", confidence=0.9, lat=52.30, lon=9.50),
+                       row(name="Gehrdener Berg", category="mountain", confidence=0.86, lat=52.303, lon=9.589)],
+        }
+        p = {f["name"]: f["p"] for f in R.select(rows)[0]}
+        self.assertEqual(p, {"Benther Berg": 8, "Telemax": 8, "Marktkirche": 10, "Aegidienkirche": 60,
+                             "Denkmal am Berg": 60, "Gehrdener Berg": 250})
+
+    def test_footprints_widen_p(self):
+        # 60 × 25 m church: half-diagonal 32.5 m → p 17 (> the 10 m floor)
+        church = R.buildings(row(name="Marktkirche", cls="church", lat=52.0, dx=60 / (111195 * 0.6157), dy=25 / 111195))
+        self.assertEqual(church["p"], 17)
+        # 300 × 200 m castle: half-diagonal 180 m → p 91
+        castle = R.buildings(row(name="Schloss Groß", cls="castle", lat=52.0, dx=300 / (111195 * 0.6157), dy=200 / 111195))
+        self.assertEqual(castle["p"], 91)
+        # 500 m bridge (a line): half-diagonal 250 m → p 125 against the 8 m floor
+        bridge = R.infra(row(name="Talbrücke", cls="bridge", wikidata="Q1", lat=52.0, dx=500 / (111195 * 0.6157), dy=0))
+        self.assertEqual(bridge["p"], 125)
+
+    def test_clamped(self):
+        huge = R.buildings(row(name="Burg X", cls="castle", lat=52.0, dx=0.1, dy=0.1))
+        self.assertEqual(huge["p"], 1000)
+        point = R.land(row(name="Gipfel", cls="peak", dx=0, dy=0))
+        self.assertEqual(point["p"], 8)
+        self.assertEqual(R.uncertainty("land", row(dx=None, dy=None)), 8)
+
+    def test_merge_keeps_the_primary_p(self):
+        rows = {"infra": [row(name="Telemax", cls="communication_tower", height=None, lat=52.393, lon=9.800)],
+                "buildings": [row(name="Telemax", cls="tower", height=282.0, lat=52.393, lon=9.800,
+                                  dx=0.001, dy=0.001)]}
+        feats, _ = R.select(rows)
+        self.assertEqual((len(feats), feats[0]["src"], feats[0]["p"]), (1, "infra", 8))
+        rows = {"land": [row(name="Kaliberg", cls="peak", lat=52.3127, lon=9.6476)],
+                "places": [row(name="Kaliberg", category="castle", confidence=0.9, lat=52.3128, lon=9.6477)]}
+        feats, _ = R.select(rows)
+        self.assertEqual([f["p"] for f in feats], [8])
+
+
 class Weights(unittest.TestCase):
     def w(self, kind, e=None, wikidata=None):
         return R.weight({"kind": kind, "e": e, "wikidata": wikidata})
@@ -171,7 +218,8 @@ class Weights(unittest.TestCase):
     def test_record_shape(self):
         f = {"name": "Europaturm", "kind": "communication_tower", "lat": 50.135321, "lon": 8.654634,
              "e": 337.6, "wikidata": "Q1", "w": 2.0}
-        self.assertEqual(R.record(f), ["Europaturm", "communication_tower", 50.13532, 8.65463, 338, 2.0])
+        f["p"] = 8
+        self.assertEqual(R.record(f), ["Europaturm", "communication_tower", 50.13532, 8.65463, 338, 2.0, 8])
         self.assertEqual(R.record(dict(f, e=None))[4], 0)
 
 

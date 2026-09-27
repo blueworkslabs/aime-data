@@ -1,10 +1,11 @@
 """Reading Overture Maps: STAC file selection and DuckDB extraction.
 
 Only the Parquet files whose STAC extent intersects the coverage are read,
-never a whole theme. Positions are bounding-box centres, so the large
-`geometry` column is never downloaded except for the country polygons; for
-points that is exact, for building footprints it is within the kinds'
-placement precision.
+never a whole theme.
+Positions are bounding-box centres, so the large `geometry` column is never
+downloaded except for the country polygons. A bbox centre is exact for points
+but not a polygon centroid; the bbox extent feeds each feature's position
+uncertainty `p` instead of any claim about centroid distance.
 """
 import json
 import hashlib
@@ -110,7 +111,10 @@ def box_of(cells):
     return (min(lons), min(lats), max(lons) + 1, max(lats) + 1)
 
 
-CENTRE = "(bbox.xmin + bbox.xmax) / 2 AS lon, (bbox.ymin + bbox.ymax) / 2 AS lat"
+# Bbox centre as the position and bbox extent (degrees) for the position
+# uncertainty p (rules.uncertainty).
+CENTRE = ("(bbox.xmin + bbox.xmax) / 2 AS lon, (bbox.ymin + bbox.ymax) / 2 AS lat, "
+          "bbox.xmax - bbox.xmin AS dx, bbox.ymax - bbox.ymin AS dy")
 
 # SQL pre-filters are supersets of the rules in rules.py, which decide exactly.
 QUERIES = {

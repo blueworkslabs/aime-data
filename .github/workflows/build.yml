@@ -11,7 +11,7 @@ on:
         description: Overture release (empty = latest)
         required: false
       force:
-        description: Rebuild for verification; published release bytes remain immutable
+        description: Rebuild an already published release; changed bytes become the next data revision, identical bytes are a no-op
         type: boolean
         default: false
   pull_request:

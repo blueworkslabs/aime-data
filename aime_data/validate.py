@@ -2,9 +2,11 @@
 
     python -m aime_data.validate public
 
-Checks the index, every cell file of the index's release (schema, release,
-cell id, record shape, kinds, bounds, precision, weights, sorting, size) and
-that the set of cell files matches `index.cells` exactly.
+Checks the index, every cell file of the index's dataset (schema, release,
+revision, cell id, record shape, kinds, bounds, precision, weights, position
+uncertainty, sorting, size) and that the set of cell files matches
+`index.cells` exactly. Other dataset directories (the retained previous one)
+are not checked.
 """
 import json
 import math
@@ -18,7 +20,9 @@ from .cells import record_order
 
 RELEASE = re.compile(r"^\d{4}-\d{2}-\d{2}\.\d+$")
 CELL = re.compile(r"^(-?\d+)_(-?\d+)$")
-INDEX_KEYS = {"schema", "release", "built", "cellDeg", "coverage", "path", "cells", "license", "attribution", "kinds"}
+INDEX_KEYS = {"schema", "release", "revision", "dataset", "built", "cellDeg", "coverage", "path", "cells",
+              "license", "attribution", "kinds"}
+CELL_KEYS = {"schema", "release", "revision", "cell", "f"}
 
 
 def read(path, mode="r"):
@@ -31,9 +35,9 @@ def decimals_ok(x, places):
 
 
 def check_record(rec, kinds, lat0, lon0):
-    if not isinstance(rec, list) or len(rec) != 6:
-        return "record is not a 6-element array"
-    name, kind, lat, lon, e, w = rec
+    if not isinstance(rec, list) or len(rec) != 7:
+        return "record is not a 7-element array"
+    name, kind, lat, lon, e, w, p = rec
     if not isinstance(name, str) or not name.strip():
         return "empty name"
     if len(name) > C.NAME_MAX:
@@ -42,7 +46,7 @@ def check_record(rec, kinds, lat0, lon0):
         return "name not NFC"
     if kind not in kinds:
         return f"unknown kind {kind!r}"
-    for v in (lat, lon, e, w):
+    for v in (lat, lon, e, w, p):
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
             return "non-numeric field"
     if not (lat0 <= lat < lat0 + C.CELL_DEG and lon0 <= lon < lon0 + C.CELL_DEG):
@@ -53,6 +57,8 @@ def check_record(rec, kinds, lat0, lon0):
         return "e is not an integer"
     if not (C.W_MIN <= w <= C.W_MAX) or not decimals_ok(w, 1):
         return f"weight {w} outside 0.5–2.0 or not one decimal"
+    if not isinstance(p, int) or not (C.P_MIN <= p <= C.P_MAX):
+        return f"p {p} is not an integer in {C.P_MIN}–{C.P_MAX} m"
     return None
 
 
@@ -71,12 +77,14 @@ def validate_cell(path, index):
         doc = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as e:
         return errs + [f"{name}: not JSON ({e})"]
-    if not isinstance(doc, dict) or set(doc) != {"schema", "release", "cell", "f"}:
-        return errs + [f"{name}: keys must be schema, release, cell, f"]
+    if not isinstance(doc, dict) or set(doc) != CELL_KEYS:
+        return errs + [f"{name}: keys must be {', '.join(sorted(CELL_KEYS))}"]
     if doc["schema"] != C.SCHEMA:
         errs.append(f"{name}: schema {doc['schema']!r}")
     if doc["release"] != index["release"]:
         errs.append(f"{name}: release {doc['release']!r} does not match the index")
+    if doc["revision"] != index["revision"]:
+        errs.append(f"{name}: revision {doc['revision']!r} does not match the index")
     if doc["cell"] != [lat0, lon0]:
         errs.append(f"{name}: cell {doc['cell']!r} does not match the file name")
     f = doc["f"]
@@ -103,17 +111,17 @@ def validate_index(index):
         errs.append(f"index: release {index['release']!r}")
     if index["cellDeg"] != C.CELL_DEG:
         errs.append("index: cellDeg")
-    if index["path"] != f"{index['release']}/cells/":
-        errs.append("index: path must be <release>/cells/")
+    rev = index["revision"]
+    if isinstance(rev, bool) or not isinstance(rev, int) or rev < 1:
+        errs.append(f"index: revision {rev!r} must be an integer ≥ 1")
+    elif index["dataset"] != C.dataset_name(index["release"], rev):
+        errs.append("index: dataset must be <release>-r<revision>")
+    if index["path"] != f"{index['dataset']}/cells/":
+        errs.append("index: path must be <dataset>/cells/")
     if index["license"] != C.LICENSE or index["attribution"] != C.ATTRIBUTION:
         errs.append("index: licence or attribution")
-    kinds = index["kinds"]
-    if not isinstance(kinds, dict) or not kinds or not all(
-            isinstance(v, dict) and isinstance(v.get("placementM"), (int, float)) and v["placementM"] > 0
-            for v in kinds.values()):
-        errs.append("index: kinds must map each kind to {placementM > 0}")
-    elif kinds != C.KINDS:
-        errs.append("index: kinds differ from the contract table")
+    if index["kinds"] != C.KINDS:
+        errs.append("index: kinds must be the contract's list of kind strings")
     if not isinstance(index["coverage"], list) or not index["coverage"] or not all(
             isinstance(c, str) and re.match(r"^[A-Z]{2}$", c) for c in index["coverage"]):
         errs.append("index: coverage must list ISO country codes")

@@ -35,29 +35,39 @@ def parse_cells(text):
     return {tuple(int(v) for v in c.split("_")) for c in text.split(",") if c}
 
 
+def percentile(sorted_values, q):
+    return sorted_values[min(len(sorted_values) - 1, int(q * len(sorted_values)))] if sorted_values else 0
+
+
 def report(stats, grouped, index, summary, known):
-    by_kind = {}
+    by_kind, ps = {}, []
     for cell, recs in grouped.items():
         for r in recs:
             by_kind[r[1]] = by_kind.get(r[1], 0) + 1
+            ps.append(r[6])
+    ps.sort()
     return {
-        "release": index["release"], "built": index["built"], "coverage": index["coverage"],
+        "release": index["release"], "dataset": index["dataset"], "built": index["built"], "coverage": index["coverage"],
         "cells": len(index["cells"]), "features": summary["features"],
         "largestCell": summary["largestCell"], "largestBytes": summary["largestBytes"],
         "candidates": stats["candidates"], "mergedDuplicates": stats["merged"],
         "placesDroppedNearThemeTwin": stats["places_dropped_near_theme_twin"],
         "kinds": dict(sorted(by_kind.items(), key=lambda kv: -kv[1])),
+        "p": {"p50": percentile(ps, 0.5), "p90": percentile(ps, 0.9), "max": ps[-1] if ps else 0,
+              "atLeast100m": sum(1 for v in ps if v >= 100)},
         "knownLandmarks": known,
     }
 
 
 def markdown(rep):
-    lines = [f"## Aimé landmark cells {rep['release']}", "",
+    lines = [f"## Aimé landmark cells {rep['dataset']}", "",
              f"{rep['features']:,} landmarks in {rep['cells']} cells, coverage {', '.join(rep['coverage'])}. "
              f"Largest cell {rep['largestCell']} ({rep['largestBytes'] / 1024:.0f} KiB).", "",
              f"Candidates per theme: {rep['candidates']}; merged duplicates: {rep['mergedDuplicates']}; "
              f"places dropped next to a theme twin: {rep['placesDroppedNearThemeTwin']}.", "",
-             "Kinds: " + ", ".join(f"{k} {n}" for k, n in rep["kinds"].items()), ""]
+             "Kinds: " + ", ".join(f"{k} {n}" for k, n in rep["kinds"].items()), "",
+             f"Position uncertainty p: median {rep['p']['p50']} m, 90th percentile {rep['p']['p90']} m, "
+             f"max {rep['p']['max']} m; {rep['p']['atLeast100m']} landmarks at 100 m or more.", ""]
     missing = [k for k in rep["knownLandmarks"] if not k["found"]]
     lines.append(f"Known landmarks: {len(rep['knownLandmarks']) - len(missing)}/{len(rep['knownLandmarks'])} found"
                  + ("." if not missing else ", missing: " + ", ".join(k["name"] for k in missing) + "."))

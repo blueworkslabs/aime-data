@@ -19,14 +19,14 @@ def put(path, data):
         fh.write(data)
 
 
-def feat(name, kind, lat, lon, e=None, w=1.0):
-    return {"name": name, "kind": kind, "lat": lat, "lon": lon, "e": e, "wikidata": None, "w": w}
+def feat(name, kind, lat, lon, e=None, w=1.0, p=8):
+    return {"name": name, "kind": kind, "lat": lat, "lon": lon, "e": e, "wikidata": None, "w": w, "p": p}
 
 
 FEATURES = [
     feat("Telemax", "communication_tower", 52.393061, 9.799714, 282, 1.8),
-    feat("Marktkirche", "church", 52.37179, 9.73533, 97, 1.3),
-    feat("Aegidienkirche", "church", 52.3706, 9.7392, None, 1.1),
+    feat("Marktkirche", "church", 52.37179, 9.73533, 97, 1.3, 16),
+    feat("Aegidienkirche", "church", 52.3706, 9.7392, None, 1.1, 60),
     feat("Benther Berg", "peak", 52.3386, 9.61661, 173, 1.8),
     feat("Edge", "tower", 52.999999, 9.5, 20, 1.0),  # rounds to 53.00000: next cell north
     feat("Zürich", "church", 47.37, 8.54, None, 1.1),  # outside the coverage cells
@@ -44,18 +44,18 @@ class Build(unittest.TestCase):
         shutil.rmtree(self.dir)
 
     def cell(self, name):
-        return os.path.join(self.dir, "v1", REL, "cells", name + ".json")
+        return os.path.join(self.dir, "v1", REL + "-r1", "cells", name + ".json")
 
     def test_layout_index_and_sorting(self):
         self.assertEqual(self.index["cells"], ["52_9", "53_9"])
-        self.assertEqual(self.index["path"], f"{REL}/cells/")
-        self.assertEqual(self.index["kinds"]["peak"], {"placementM": 8})
-        self.assertEqual(self.index["kinds"]["church"], {"placementM": 25})
-        self.assertEqual(self.index["kinds"]["memorial"], {"placementM": 30})
-        self.assertEqual(self.index["kinds"]["dam"], {"placementM": 50})
+        self.assertEqual((self.index["revision"], self.index["dataset"]), (1, REL + "-r1"))
+        self.assertEqual(self.index["path"], f"{REL}-r1/cells/")
+        self.assertIn("peak", self.index["kinds"])
+        self.assertIsInstance(self.index["kinds"], list, "kinds carry no position values")
         doc = json.loads(read(self.cell("52_9")))
-        self.assertEqual((doc["schema"], doc["release"], doc["cell"]), (1, REL, [52, 9]))
+        self.assertEqual((doc["schema"], doc["release"], doc["revision"], doc["cell"]), (1, REL, 1, [52, 9]))
         self.assertEqual([r[0] for r in doc["f"]], ["Benther Berg", "Telemax", "Marktkirche", "Aegidienkirche"])
+        self.assertEqual([r[6] for r in doc["f"]], [8, 8, 16, 60])
         self.assertEqual(json.loads(read(self.cell("53_9")))["f"][0][2], 53.0)
         self.assertEqual(read(os.path.join(self.dir, "_headers")), C.HEADERS)
         self.assertIn(C.ATTRIBUTION, read(os.path.join(self.dir, "index.html")))
@@ -83,9 +83,11 @@ class Build(unittest.TestCase):
         errs, _ = validate(self.dir)
         self.assertTrue(any(fragment in e for e in errs), errs)
 
-    def test_rejects_release_mismatch(self):
+    def test_rejects_release_or_revision_mismatch(self):
         self.rewrite("52_9", lambda d: d.update(release="2026-08-19.0"))
-        self.assertInvalid("does not match the index")
+        self.assertInvalid("release '2026-08-19.0' does not match the index")
+        self.rewrite("52_9", lambda d: d.update(release=REL, revision=2))
+        self.assertInvalid("revision 2 does not match the index")
 
     def test_rejects_unknown_kind_bounds_precision_weight(self):
         cases = [
@@ -96,7 +98,12 @@ class Build(unittest.TestCase):
             (lambda d: d["f"][0].__setitem__(4, 12.5), "e is not an integer"),
             (lambda d: d["f"][0].__setitem__(0, ""), "empty name"),
             (lambda d: d["f"][0].__setitem__(0, "Lübeck"), "not NFC"),
-            (lambda d: d["f"].append(["x", "peak", 52.5, 9.5, 0]), "6-element"),
+            (lambda d: d["f"].append(["x", "peak", 52.5, 9.5, 0, 1.0]), "7-element"),
+            (lambda d: d["f"][0].pop(), "7-element"),
+            (lambda d: d["f"][0].__setitem__(6, 4), "p 4"),
+            (lambda d: d["f"][0].__setitem__(6, 1001), "p 1001"),
+            (lambda d: d["f"][0].__setitem__(6, 12.5), "p 12.5"),
+            (lambda d: d["f"][0].__setitem__(6, None), "non-numeric"),
             (lambda d: d["f"].reverse(), "not sorted"),
             (lambda d: d.update(schema=2), "schema"),
         ]
@@ -113,12 +120,12 @@ class Build(unittest.TestCase):
         put(self.cell("53_9"), "{}")
         put(self.cell("40_1"), "{}")
         self.assertInvalid("file present but not in the index")
-        big = [["x" * 70, "peak", 52.5, 9.5, 0, 1.0]] * 14000
+        big = [["x" * 70, "peak", 52.5, 9.5, 0, 1.0, 8]] * 14000
         self.rewrite("52_9", lambda d: d.update(f=big))
         self.assertInvalid("bytes, limit")
 
     def test_write_refuses_oversized_cell(self):
-        big = {(52, 9): [["x" * 70, "peak", 52.5, 9.5, 0, 1.0]] * 14000}
+        big = {(52, 9): [["x" * 70, "peak", 52.5, 9.5, 0, 1.0, 8]] * 14000}
         d = tempfile.mkdtemp()
         try:
             with self.assertRaises(ValueError):
@@ -129,8 +136,9 @@ class Build(unittest.TestCase):
     def test_rejects_index_changes(self):
         path = os.path.join(self.dir, "v1", "index.json")
         index = json.loads(read(path))
-        for key, value, fragment in [("kinds", {"peak": {"placementM": 8}}, "kinds differ"),
-                                     ("path", "x/", "path"), ("attribution", "OSM", "attribution"),
+        for key, value, fragment in [("kinds", {"peak": {"placementM": 8}}, "kinds must be"),
+                                     ("path", f"{REL}/cells/", "path"), ("dataset", REL + "-r2", "dataset"),
+                                     ("revision", 0, "revision"), ("attribution", "OSM", "attribution"),
                                      ("built", "yesterday", "built")]:
             with self.subTest(key):
                 put(path, json.dumps(dict(index, **{key: value}), ensure_ascii=False))
