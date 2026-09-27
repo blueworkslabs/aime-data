@@ -59,7 +59,27 @@ WORD_KINDS = (
 BRIDGE_WORDS = ("brücke", "bruecke", "bridge", "viadukt", "viaduct")
 
 # Position uncertainty floor per source, metres (README "Position uncertainty").
-P_FLOOR = {"land": 8, "infra": 8, "buildings": 10, "places": 60, "places:church": 60, "places:mountain": 250}
+P_FLOOR = {"land": 8, "infra": 8, "buildings": 10, "places": 60, "places:church": 60, "places:plant": 60,
+           "places:mountain": 250}
+
+# Tower geometry (README "Tower geometry"). Tower-like points, named or not,
+# anchor buildings that contain them; buildings of 50 m or more anchor
+# places-only towers next to them.
+TOWER_POINT_CLASSES = ("observation", "bell_tower", "communication_tower", "watchtower", "minaret")
+TOWER_POINT_MAN_MADE = ("tower", "communications_tower")
+SNAP_BUILDING_KINDS = ("church", "cathedral", "chapel", "mosque", "synagogue", "temple", "monastery",
+                       "castle", "tall_building", "tower")
+SNAP_PLACES_KINDS = ("tower", "communication_tower", "observation")
+TALL_ANCHOR_M = 50
+PLACES_TOWER_SNAP_M = 200
+# Power plants: places named ...kraftwerk / power station|plant in these
+# categories; unnamed chimneys and cooling towers of 80 m or more take the
+# name of a plant within 1 km.
+PLANT_CATEGORIES = ("power_plant", "electric_utility_provider", "campus_building", "public_utility_provider")
+PLANT_NAME = re.compile(r"kraftwerk\b|power (station|plant)", re.I)
+TALL_STACK_M = 80
+PLANT_NAMING_M = 1000
+STACK_NAMES = {"chimney": "Chimney", "cooling": "Cooling tower"}
 
 CHURCH_CLEARANCE_M = 250
 MOUNTAIN_CLEARANCE_M = 2000
@@ -100,7 +120,21 @@ def uncertainty(src, row):
 def feature(name, kind, row, src, e=None, wikidata=None):
     assert kind in KINDS, kind
     return {"name": name, "kind": kind, "lat": row["lat"], "lon": row["lon"], "e": num(e),
-            "wikidata": wikidata or None, "src": src, "p": uncertainty(src, row)}
+            "wikidata": wikidata or None, "src": src, "p": uncertainty(src, row),
+            "dx": num(row.get("dx")) or 0, "dy": num(row.get("dy")) or 0}
+
+
+def tower_anchor(row):
+    """A tower-like infrastructure point (named or not) as a snap anchor."""
+    if row.get("cls") in TOWER_POINT_CLASSES or row.get("man_made") in TOWER_POINT_MAN_MADE:
+        return {"lat": row["lat"], "lon": row["lon"], "h": num(row.get("height")) or 0, "p": uncertainty("infra", row)}
+
+
+def tall_anchor(row):
+    """A building of 50 m or more as a snap anchor for places-only towers."""
+    h = num(row.get("height"))
+    if h is not None and h >= TALL_ANCHOR_M:
+        return {"lat": row["lat"], "lon": row["lon"], "h": h, "p": uncertainty("buildings", row)}
 
 
 def land(row):
@@ -124,6 +158,9 @@ def infra(row):
     elif cls == "bridge" and name and row.get("wikidata") and any(
             w.endswith(b) for w in words(name) for b in BRIDGE_WORDS):
         kind = "bridge"
+    elif (mm == "chimney" or mm == "cooling_tower" or cls == "cooling") and h is not None and h >= TALL_STACK_M:
+        kind = "chimney" if mm == "chimney" else "cooling"
+        name = name or STACK_NAMES[kind]
     if kind:
         return feature(name, kind, row, "infra", h, row.get("wikidata"))
 
@@ -174,6 +211,8 @@ def places(row):
         return feature(name, "church", row, "places:church")
     if cat == "mountain" and conf >= 0.8 and " - " not in name:
         return feature(name, "peak", row, "places:mountain")
+    if cat in PLANT_CATEGORIES and conf >= 0.7 and PLANT_NAME.search(name):
+        return feature(name, "chimney", row, "places:plant")
 
 
 def metres(a, b):
@@ -201,15 +240,34 @@ class Near:
         by, bx = self._bucket(f)
         self.grid.setdefault((k, by, bx), []).append(f)
 
-    def find(self, f, radius_m, key=None):
+    def all(self, f, radius_m, key=None):
         assert radius_m <= 3000
         by, bx = self._bucket(f)
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                for g in self.grid.get((key, by + dy, bx + dx), ()):
-                    if metres(f, g) < radius_m:
-                        return g
-        return None
+        return [g for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                for g in self.grid.get((key, by + dy, bx + dx), ()) if metres(f, g) < radius_m]
+
+    def find(self, f, radius_m, key=None):
+        found = self.all(f, radius_m, key)
+        return found[0] if found else None
+
+
+def inside_bbox(point, f):
+    """Whether point lies inside feature f's bounding box (centre ± extent/2)."""
+    return abs(point["lat"] - f["lat"]) <= f["dy"] / 2 and abs(point["lon"] - f["lon"]) <= f["dx"] / 2
+
+
+def best_anchor(f, anchors):
+    """Tallest anchor, then nearest; deterministic."""
+    return min(anchors, key=lambda a: (-a["h"], metres(f, a), a["lat"], a["lon"]))
+
+
+PLACES_SNAP_P_MIN = 25  # a places point matched to a structure keeps some doubt about the match
+
+
+def snap(f, anchor, how):
+    floor = PLACES_SNAP_P_MIN if f["src"].startswith("places") else P_FLOOR["infra"]
+    f.update(lat=anchor["lat"], lon=anchor["lon"], p=max(anchor["p"], floor), snapped=how)
+    f["e"] = f["e"] or anchor["h"] or None
 
 
 def weight(f):
@@ -256,6 +314,40 @@ def select(rows):
         kept_places.append(dict(f, src="places"))
     picked["places"] = kept_places
     stats["places_dropped_near_theme_twin"] = dropped
+
+    # Tower geometry: a building's visible target is the tower inside it (the
+    # Rathaus dome, a church steeple); a places-only tower sits on the tall
+    # building next to it (VW Tower → Hochhaus Lister Tor).
+    towers = Near(filter(None, map(tower_anchor, rows.get("infra", ()))))
+    talls = Near(filter(None, map(tall_anchor, rows.get("buildings", ()))))
+    snapped = {"building-tower": 0, "places-tall-building": 0, "places-tower": 0}
+    for f in picked["buildings"]:
+        if f["kind"] in SNAP_BUILDING_KINDS and f["dx"] and f["dy"]:
+            radius = min(3000, metres(f, {"lat": f["lat"] + f["dy"] / 2, "lon": f["lon"] + f["dx"] / 2}) + 1)
+            inside = [a for a in towers.all(f, radius) if inside_bbox(a, f)]
+            if inside:
+                snap(f, best_anchor(f, inside), "building-tower")
+                snapped["building-tower"] += 1
+    for f in picked["places"]:
+        if f["kind"] in SNAP_PLACES_KINDS:
+            near = talls.all(f, PLACES_TOWER_SNAP_M)
+            if near:
+                snap(f, best_anchor(f, near), "places-tall-building")
+                snapped["places-tall-building"] += 1
+                continue
+            near = towers.all(f, PLACES_TOWER_SNAP_M)
+            if near:
+                snap(f, best_anchor(f, near), "places-tower")
+                snapped["places-tower"] += 1
+    stats["snapped"] = snapped
+
+    # Unnamed chimneys and cooling towers take the name of a plant within 1 km.
+    plants = Near(f for f in picked["places"] if f["kind"] == "chimney")
+    for f in picked["infra"]:
+        if f["kind"] in STACK_NAMES and f["name"] == STACK_NAMES[f["kind"]]:
+            near = plants.all(f, PLANT_NAMING_M)
+            if near:
+                f["name"] = min(near, key=lambda g: (metres(f, g), g["name"]))["name"]
 
     # Dedupe: same normalised name within 400 m; the first by provenance wins and
     # fills its missing elevation/height and Wikidata id from the others. It

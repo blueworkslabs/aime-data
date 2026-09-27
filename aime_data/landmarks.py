@@ -25,6 +25,10 @@ KNOWN = (
     ("Kaliberg", 52.3127, 9.6476), ("Burgbergturm", 52.3146, 9.5856),
     ("Aegidienkirche", 52.3706, 9.7392), ("Marienburg", 52.1737, 9.7701),
     ("Herrenhausen", 52.3906, 9.6989), ("Gehrdener Berg", 52.3029, 9.5890),
+    ("Rathausturm", 52.3672, 9.7373), ("Heizkraftwerk Linden", 52.3731, 9.7143),
+    # Surveyed tower, not the geocoded places point 135 m west (RADIUS_M allows either,
+    # so the test in tests/test_tower_geometry.py checks the snap itself).
+    ("VW Tower", 52.3801, 9.7431),
 )
 RADIUS_M = 1500
 

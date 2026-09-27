@@ -163,6 +163,29 @@ Per 1° cell, from Overture (release pinned per build):
    land > infrastructure > buildings > places and fill missing `e`/Wikidata
    from the others.
 
+6. Power plants: `places/place` named `…kraftwerk` or `power station|plant`
+   in `power_plant|electric_utility_provider|campus_building|
+   public_utility_provider` with confidence ≥ 0.7 become kind `chimney` (the
+   visible part of a plant). Unnamed `base/infrastructure` chimneys and
+   cooling towers (`man_made=chimney|cooling_tower` or class `cooling`) of
+   80 m or more become `chimney`/`cooling`, named after a plant within 1 km,
+   else "Chimney"/"Cooling tower".
+7. **Tower geometry** (added 2026-09-27 after a hardware test showed
+   ~135 m and ~40 m reference offsets):
+   - A building feature (church, cathedral, chapel, mosque, synagogue,
+     temple, monastery, castle, tall building, tower) whose bounding box
+     contains a tower-like infrastructure point (class `observation|
+     bell_tower|communication_tower|watchtower|minaret` or
+     `man_made=tower|communications_tower`, named or not) takes the
+     tallest such point's position and `p`. The visible target of the
+     Neues Rathaus is its dome (Rathausturm), of a church its steeple.
+   - A places-only `tower`/`communication_tower`/`observation` within 200 m
+     of a building of 50 m or more takes the tallest such building's position
+     and `p`, but never below 25 m, because the match itself can be wrong
+     (VW Tower → Hochhaus Lister Tor, 135 m east of the geocoded point).
+     Without one it may take a tower point within 200 m instead.
+   Snapping runs before the dedupe, and the build report counts snaps.
+
 *Name words.* Names are split into case-folded words (a trailing
 parenthesis ignored). A keyword matches a whole word or the end of a compound
 (`Wasserschloss`, `Bismarckwarte`), never a prefix or the middle of a word, so

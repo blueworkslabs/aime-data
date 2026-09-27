@@ -52,6 +52,7 @@ def report(stats, grouped, index, summary, known):
         "largestCell": summary["largestCell"], "largestBytes": summary["largestBytes"],
         "candidates": stats["candidates"], "mergedDuplicates": stats["merged"],
         "placesDroppedNearThemeTwin": stats["places_dropped_near_theme_twin"],
+        "snapped": stats["snapped"],
         "kinds": dict(sorted(by_kind.items(), key=lambda kv: -kv[1])),
         "p": {"p50": percentile(ps, 0.5), "p90": percentile(ps, 0.9), "max": ps[-1] if ps else 0,
               "atLeast100m": sum(1 for v in ps if v >= 100)},
@@ -64,7 +65,8 @@ def markdown(rep):
              f"{rep['features']:,} landmarks in {rep['cells']} cells, coverage {', '.join(rep['coverage'])}. "
              f"Largest cell {rep['largestCell']} ({rep['largestBytes'] / 1024:.0f} KiB).", "",
              f"Candidates per theme: {rep['candidates']}; merged duplicates: {rep['mergedDuplicates']}; "
-             f"places dropped next to a theme twin: {rep['placesDroppedNearThemeTwin']}.", "",
+             f"places dropped next to a theme twin: {rep['placesDroppedNearThemeTwin']}; "
+             f"tower geometry snaps: {rep['snapped']}.", "",
              "Kinds: " + ", ".join(f"{k} {n}" for k, n in rep["kinds"].items()), "",
              f"Position uncertainty p: median {rep['p']['p50']} m, 90th percentile {rep['p']['p90']} m, "
              f"max {rep['p']['max']} m; {rep['p']['atLeast100m']} landmarks at 100 m or more.", ""]

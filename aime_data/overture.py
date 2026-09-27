@@ -132,19 +132,26 @@ QUERIES = {
                                             'windmill', 'chimney', 'water_tower')
              OR source_tags['historic'] IN ('castle', 'ruins', 'fort', 'tower')
              OR (class = 'bridge' AND wikidata IS NOT NULL)))
-          OR (class IN ('communication_tower', 'mobile_phone_tower') AND height >= 50))"""),
+          OR (class IN ('communication_tower', 'mobile_phone_tower') AND height >= 50)
+          -- Unnamed tower points anchor the tower snap; unnamed chimneys and
+          -- cooling towers of 80 m or more are landmarks of their own.
+          OR class IN ('observation', 'bell_tower', 'communication_tower', 'watchtower', 'minaret', 'cooling')
+          OR source_tags['man_made'] IN ('tower', 'communications_tower', 'chimney', 'cooling_tower'))"""),
     "buildings": ("buildings", "building", """
         SELECT names.primary AS name, class AS cls, height, {centre}
         FROM {src} WHERE {box} AND (
           (names.primary IS NOT NULL AND (
              class IN ('church', 'cathedral', 'chapel', 'mosque', 'synagogue', 'temple', 'monastery', 'castle', 'tower')
              OR regexp_matches(names.primary, 'schloss|schloß|burg|castle|palace|palais|festung|kloster|abtei', 'i')))
-          OR height >= 80)"""),
+          OR height >= 50)"""),
     "places": ("places", "place", """
         SELECT names.primary AS name, basic_category AS category, confidence, {centre}
         FROM {src} WHERE {box} AND names.primary IS NOT NULL AND confidence >= 0.6
-          AND basic_category IN ('castle', 'fort', 'monument', 'lighthouse', 'memorial_site',
-                                 'historic_site', 'christian_place_of_worship', 'mountain')"""),
+          AND (basic_category IN ('castle', 'fort', 'monument', 'lighthouse', 'memorial_site',
+                                  'historic_site', 'christian_place_of_worship', 'mountain')
+               OR (basic_category IN ('power_plant', 'electric_utility_provider', 'campus_building',
+                                      'public_utility_provider')
+                   AND regexp_matches(names.primary, 'kraftwerk|power (station|plant)', 'i')))"""),
 }
 
 
