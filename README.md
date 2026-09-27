@@ -22,6 +22,7 @@ layout requires `schema: 2` and a module update.
 ```
 public/
   _headers
+  index.html        (attribution and licence page)
   v1/
     index.json
     <release>/cells/<lat>_<lon>.json
@@ -109,13 +110,15 @@ Per 1° cell, from Overture (release pinned per build):
    `tower|mast|communications_tower|lighthouse|windmill|chimney|water_tower`;
    or named with `source_tags.historic` in `castle|ruins|fort|tower`; or class
    `communication_tower|mobile_phone_tower` with height ≥ 50 m (name
-   "Communication tower"); or class `bridge` with name and Wikidata id.
+   "Communication tower"); or class `bridge` with Wikidata id and a name
+   ending in `brücke|bridge|viadukt|viaduct` (bridges often carry the
+   street's name and Wikidata id, which are not landmarks).
 3. `buildings/building`: named with class `church|cathedral|chapel|mosque|
-   synagogue|temple|monastery|castle|tower`; or named and matching
-   `schloss|burg|castle|palace|palais|festung|kloster|abtei` (case-insensitive);
-   or height ≥ 80 m (name "Tall building" when unnamed).
+   synagogue|temple|monastery|castle|tower`; or named with a castle word
+   (see *Name words* below) from `schloss|burg|castle|palace|palais|festung|
+   kloster|abtei`; or height ≥ 80 m (name "Tall building" when unnamed).
 4. `places/place`, named: `castle|fort|monument|lighthouse|memorial_site` with
-   confidence ≥ 0.6; `historic_site` with confidence ≥ 0.6 and a name matching
+   confidence ≥ 0.6; `historic_site` with confidence ≥ 0.6 and a name word from
    `burg|schloss|castle|turm|tower|warte|kastell|ruine|ruin|fort|kloster|abbey|abtei`;
    `christian_place_of_worship` with confidence ≥ 0.7 **only if no buildings-theme
    church lies within 250 m**; `mountain` with confidence ≥ 0.8 **only if no
@@ -124,6 +127,18 @@ Per 1° cell, from Overture (release pinned per build):
    spaces) within 400 m merges into one feature; keep the first by provenance
    land > infrastructure > buildings > places and fill missing `e`/Wikidata
    from the others.
+
+*Name words.* Names are split into case-folded words (a trailing
+parenthesis ignored). A keyword matches a whole word or the end of a compound
+(`Wasserschloss`, `Bismarckwarte`), never a prefix or the middle of a word, so
+"Schlosserei", "Burger King" and "Schlossstraße" stay out. A word merely ending
+in `burg` counts only when it is the whole name (`Marienburg`), because German
+place names end in -burg: "Bahnhof Nienburg" and "Amtsgericht Burgwedel" stay
+out. The kind follows the keyword: castle words → `castle`,
+`festung|kastell|fort` → `fort`, `ruine|ruin` → `ruins`,
+`kloster|abbey|abtei` → `monastery`, `turm|tower|warte` → `tower`. Plain
+substrings, as first written, made 278 of 1,899 features in cell 52_9 "castles",
+mostly shops and offices; words bring it to 95 real ones.
 
 Excluded on purpose: viewpoints (places to stand, not targets), generic
 tourist attractions, sports venues.
@@ -135,14 +150,18 @@ tourist attractions, sports venues.
   (`https://stac.overturemaps.org/<release>/<theme>/<type>/collection.json`)
   intersects the coverage; never scan a whole theme.
 - Coverage cells: all 1° cells intersecting the DE or AT country polygons from
-  Overture `divisions/division_area` of the same release.
+  Overture `divisions/division_area` of the same release (class `land`).
+- Positions are Overture bounding-box centres: exact for points, within the
+  25 m placement of building centroids for footprints. This keeps the large
+  `geometry` column out of every download except the country polygons.
 - Output to `public/`, validate every file against this contract (schema,
   kinds, bounds, size, sorting) and the whole set against `index.json`.
 - Publish by force-pushing the contents of `public/` to the orphan branch
   `pages`, which Cloudflare Pages deploys (no build command, output = branch
   root). History on `pages` is never kept, so the repository does not grow.
-- Schedule: monthly GitHub Actions run a few days after each Overture release,
-  plus manual dispatch. A build that fails validation publishes nothing.
+- Schedule: a weekly GitHub Actions check builds within a week of each
+  monthly Overture release, plus manual dispatch. A build that fails
+  validation publishes nothing.
 
 `public/_headers`:
 
@@ -154,6 +173,30 @@ tourist attractions, sports venues.
   Cache-Control: public, max-age=31536000, immutable
   Access-Control-Allow-Origin: *
 ```
+
+### Running it
+
+```
+pip install -r requirements.txt            # DuckDB 1.5.5
+python -m unittest discover -s tests -t .  # rules, cell writer, validator
+python -m aime_data.build --cells 52_9     # one cell, for a local check
+python -m aime_data.build                  # full build, latest release
+python -m aime_data.validate public
+scripts/publish.sh public --dry-run
+```
+
+`work/` caches the extracts per release, so a re-run after a rule change
+re-selects without downloading. The build writes `work/report.md` and
+`work/report.json`: counts per theme and kind, the largest cell, and which of
+the known landmarks in `aime_data/landmarks.py` (the spike's lists plus
+Hannover) are present. A missing known landmark is a warning for review, not
+a failure. `scripts/publish.sh` keeps the previously published release's
+directory and drops older ones.
+
+GitHub Actions (`.github/workflows/build.yml`): unit tests on every push and
+pull request; a one-cell smoke build against Overture on pull requests; the
+publish job runs on manual dispatch (optional release, optional force) and
+weekly, building only when Overture's latest release is not on `pages` yet.
 
 ## Privacy
 

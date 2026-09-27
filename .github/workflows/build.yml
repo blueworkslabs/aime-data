@@ -1,0 +1,94 @@
+name: build
+
+on:
+  # Weekly check; a build runs only when Overture has published a release that
+  # is not on `pages` yet, i.e. a few days after each monthly release.
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Overture release (empty = latest)
+        required: false
+      force:
+        description: Rebuild and publish even if this release is already published
+        type: boolean
+        default: false
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s tests -t . -v
+
+  # One real cell (Hannover) against Overture, to prove extraction on a runner.
+  smoke:
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m aime_data.build --cells 52_9 --out public --work work
+      - run: cat work/report.md >> "$GITHUB_STEP_SUMMARY"
+      - run: scripts/publish.sh public --dry-run
+
+  publish:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Pick the release
+        id: pick
+        env:
+          WANTED: ${{ inputs.release }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          release=${WANTED:-$(python -c 'from aime_data.overture import latest_release; print(latest_release())')}
+          published=$(git fetch -q --depth=1 origin pages 2>/dev/null && git show FETCH_HEAD:v1/index.json \
+            | python -c 'import json,sys; print(json.load(sys.stdin)["release"])' || echo none)
+          echo "release $release, published $published"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [[ "$release" == "$published" && "$FORCE" != "true" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Release $release is already published; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Build
+        if: steps.pick.outputs.skip != 'true'
+        run: python -m aime_data.build --release "${{ steps.pick.outputs.release }}" --out public --work work
+      - name: Report
+        if: steps.pick.outputs.skip != 'true'
+        run: cat work/report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: steps.pick.outputs.skip != 'true'
+        with:
+          name: report-${{ steps.pick.outputs.release }}
+          path: work/report.json
+      - name: Publish to pages
+        if: steps.pick.outputs.skip != 'true'
+        run: scripts/publish.sh public
