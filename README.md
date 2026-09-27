@@ -191,7 +191,9 @@ re-selects without downloading. The build writes `work/report.md` and
 the known landmarks in `aime_data/landmarks.py` (the spike's lists plus
 Hannover) are present. A missing known landmark is a warning for review, not
 a failure. `scripts/publish.sh` keeps the previously published release's
-directory and drops older ones.
+directory and drops older ones. Republishing identical cells is a no-op; changed
+cells at an already published release path are rejected, including with force.
+Data-rule corrections require a new data revision, not overwriting cached URLs.
 
 GitHub Actions (`.github/workflows/build.yml`): unit tests on every push and
 pull request; a one-cell smoke build against Overture on pull requests; the

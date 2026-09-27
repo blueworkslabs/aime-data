@@ -11,7 +11,7 @@ on:
         description: Overture release (empty = latest)
         required: false
       force:
-        description: Rebuild and publish even if this release is already published
+        description: Rebuild for verification; published release bytes remain immutable
         type: boolean
         default: false
   pull_request:
@@ -47,7 +47,9 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m aime_data.build --cells 52_9 --out public --work work
       - run: cat work/report.md >> "$GITHUB_STEP_SUMMARY"
-      - run: scripts/publish.sh public --dry-run
+      # A one-cell smoke dataset is intentionally not publishable over the
+      # complete immutable release. Validate it without publication planning.
+      - run: python -m aime_data.validate public
 
   publish:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

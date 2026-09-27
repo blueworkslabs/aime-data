@@ -7,6 +7,7 @@ points that is exact, for building footprints it is within the kinds'
 placement precision.
 """
 import json
+import hashlib
 import math
 import os
 import time
@@ -133,7 +134,7 @@ QUERIES = {
         FROM {src} WHERE {box} AND (
           (names.primary IS NOT NULL AND (
              class IN ('church', 'cathedral', 'chapel', 'mosque', 'synagogue', 'temple', 'monastery', 'castle', 'tower')
-             OR regexp_matches(names.primary, 'schloss|burg|castle|palace|palais|festung|kloster|abtei', 'i')))
+             OR regexp_matches(names.primary, 'schloss|schloß|burg|castle|palace|palais|festung|kloster|abtei', 'i')))
           OR height >= 80)"""),
     "places": ("places", "place", """
         SELECT names.primary AS name, basic_category AS category, confidence, {centre}
@@ -148,7 +149,10 @@ def extract(con, release, box, work, log=print):
     present) and return {theme: [row dict, ...]}."""
     rows = {}
     for key, (theme, typ, sql) in QUERIES.items():
-        out = os.path.join(work, f"{key}.parquet")
+        # Both coverage and extraction SQL determine cache contents. A wider
+        # follow-up build must never reuse an earlier region's partial rows.
+        signature = hashlib.sha256(json.dumps([release, box, CENTRE, sql], sort_keys=True).encode()).hexdigest()[:20]
+        out = os.path.join(work, f"{key}-{signature}.parquet")
         if not os.path.exists(out):
             t = time.time()
             q = sql.format(centre=CENTRE, src=source(release, theme, typ, box), box=in_box(box))
