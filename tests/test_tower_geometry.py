@@ -38,28 +38,30 @@ class TowerGeometry(unittest.TestCase):
         self.assertAlmostEqual(f["lat"], 52.0 - 10 * M)
         self.assertEqual(f["e"], 55)
 
-    def test_places_tower_snaps_to_the_tall_building_next_to_it(self):
-        # VW Tower: the places point sits 135 m west of Hochhaus Lister Tor (91 m).
+    def test_proximity_alone_never_relocates(self):
+        # VW Tower (Telemoritz) and Hochhaus Lister Tor are different buildings 137 m apart.
         rows = {
             "places": [row(name="VW Tower", category="historic_site", confidence=0.87, lat=52.37992, lon=9.74118)],
             "buildings": [row(name="Hochhaus Lister Tor", cls="office", height=91.0, lat=52.38007, lon=9.74315,
-                              dx=0.0006, dy=0.0003),
-                          row(name=None, cls="office", height=45.0, lat=52.38073, lon=9.73883)],  # below 50 m
+                              dx=0.0006, dy=0.0003)],
+            "infra": [row(name="Funkmast", cls="communication_tower", height=60, lat=52.38008, lon=9.74316)],
         }
         feats, stats = R.select(rows)
         vw = next(f for f in feats if f["name"] == "VW Tower")
-        self.assertEqual((vw["lat"], vw["lon"], vw["snapped"]), (52.38007, 9.74315, "places-tall-building"))
-        self.assertEqual(vw["p"], 25, "a matched places point keeps at least 25 m")
-        self.assertEqual(vw["e"], 91.0)
-        self.assertIn("Hochhaus Lister Tor", [f["name"] for f in feats])
+        self.assertEqual((vw["lat"], vw["lon"], vw["p"]), (52.37992, 9.74118, 60))
+        self.assertNotIn("snapped", vw)
+        tall = next(f for f in feats if f["name"] == "Hochhaus Lister Tor")
+        self.assertNotIn("snapped", tall, "an unrelated named mast on the roof is not the building's tower")
+        self.assertEqual(stats["snapped"], {"building-tower": 0})
 
-    def test_places_tower_without_a_structure_nearby_stays(self):
-        rows = {"places": [row(name="Bismarckturm", category="historic_site", confidence=0.8, lat=52.2, lon=9.5)],
-                "buildings": [row(name=None, cls="office", height=120, lat=52.2 + 300 * M, lon=9.5)]}
-        f = R.select(rows)[0]
-        bis = next(x for x in f if x["name"] == "Bismarckturm")
-        self.assertEqual((bis["lat"], bis["p"]), (52.2, 60))
-        self.assertNotIn("snapped", bis)
+    def test_unnamed_point_needs_a_part_of_relation(self):
+        church = row(name="St. Marien", cls="church", lat=52.0, lon=9.0, dx=60 * M / 0.6157, dy=30 * M)
+        rows = {"buildings": [church, row(name="Kaufhaus", cls="tall_building", height=85, lat=52.1, lon=9.1,
+                                          dx=0.001, dy=0.001)],
+                "infra": [row(cls="observation", height=30, lat=52.0, lon=9.0),      # not a bell tower
+                          row(cls="bell_tower", height=20, lat=52.1, lon=9.1)]}      # a bell tower, but not a church
+        feats, _ = R.select(rows)
+        self.assertTrue(all("snapped" not in f for f in feats))
 
     def test_power_plants_and_tall_stacks(self):
         rows = {
@@ -73,10 +75,11 @@ class TowerGeometry(unittest.TestCase):
         }
         feats, _ = R.select(rows)
         got = sorted((f["name"], f["kind"], f["src"]) for f in feats)
-        self.assertEqual(got, [("Cooling tower", "cooling", "infra"),
-                               ("Heizkraftwerk Linden", "chimney", "infra")],
-                         "the stack takes the plant's name and the surveyed stack wins the dedupe; "
-                         "offices and low-confidence plants stay out; stacks below 80 m stay out")
+        self.assertEqual(got, [("Chimney · Heizkraftwerk Linden", "chimney", "infra"),
+                               ("Cooling tower", "cooling", "infra"),
+                               ("Heizkraftwerk Linden", "chimney", "places")],
+                         "a stack within 300 m names its plant but keeps its own position; the plant stays "
+                         "a separate places entry; offices, low-confidence plants and stacks below 80 m stay out")
 
     def test_plant_without_a_stack_is_a_places_chimney(self):
         rows = {"places": [row(name="Heizkraftwerk Linden", category="campus_building", confidence=0.76)]}

@@ -143,7 +143,7 @@ QUERIES = {
           (names.primary IS NOT NULL AND (
              class IN ('church', 'cathedral', 'chapel', 'mosque', 'synagogue', 'temple', 'monastery', 'castle', 'tower')
              OR regexp_matches(names.primary, 'schloss|schloß|burg|castle|palace|palais|festung|kloster|abtei', 'i')))
-          OR height >= 50)"""),
+          OR height >= 80)"""),
     "places": ("places", "place", """
         SELECT names.primary AS name, basic_category AS category, confidence, {centre}
         FROM {src} WHERE {box} AND names.primary IS NOT NULL AND confidence >= 0.6

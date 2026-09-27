@@ -166,25 +166,24 @@ Per 1° cell, from Overture (release pinned per build):
 6. Power plants: `places/place` named `…kraftwerk` or `power station|plant`
    in `power_plant|electric_utility_provider|campus_building|
    public_utility_provider` with confidence ≥ 0.7 become kind `chimney` (the
-   visible part of a plant). Unnamed `base/infrastructure` chimneys and
-   cooling towers (`man_made=chimney|cooling_tower` or class `cooling`) of
-   80 m or more become `chimney`/`cooling`, named after a plant within 1 km,
-   else "Chimney"/"Cooling tower".
-7. **Tower geometry** (added 2026-09-27 after a hardware test showed
-   ~135 m and ~40 m reference offsets):
-   - A building feature (church, cathedral, chapel, mosque, synagogue,
-     temple, monastery, castle, tall building, tower) whose bounding box
-     contains a tower-like infrastructure point (class `observation|
-     bell_tower|communication_tower|watchtower|minaret` or
-     `man_made=tower|communications_tower`, named or not) takes the
-     tallest such point's position and `p`. The visible target of the
-     Neues Rathaus is its dome (Rathausturm), of a church its steeple.
-   - A places-only `tower`/`communication_tower`/`observation` within 200 m
-     of a building of 50 m or more takes the tallest such building's position
-     and `p`, but never below 25 m, because the match itself can be wrong
-     (VW Tower → Hochhaus Lister Tor, 135 m east of the geocoded point).
-     Without one it may take a tower point within 200 m instead.
-   Snapping runs before the dedupe, and the build report counts snaps.
+   visible part of a plant), at the place's estimated position (p 60).
+   Unnamed `base/infrastructure` chimneys and cooling towers
+   (`man_made=chimney|cooling_tower` or class `cooling`) of 80 m or more
+   become `chimney`/`cooling` at their own position, named "Chimney · <plant>"
+   / "Cooling tower · <plant>" when a plant lies within 300 m, else "Chimney"
+   / "Cooling tower".
+7. **Tower geometry, identity first** (2026-09-27): a building feature
+   (church, cathedral, chapel, mosque, synagogue, temple, monastery, castle,
+   tall building, tower) takes the position and `p` of a tower-like
+   infrastructure point inside its bounding box only with evidence that the
+   point belongs to it: a `bell_tower` in a church, cathedral or chapel, a
+   `minaret` in a mosque, or a named point whose normalised name contains a
+   distinctive word (5+ letters, not generic like "neues", "kirche", "turm")
+   of the building's name ("Rathausturm" in "Neues Rathaus"). The tallest
+   such point wins. Proximity alone never relocates a landmark: VW Tower
+   (Telemoritz) and the Hochhaus Lister Tor 137 m away are different
+   buildings. Positions from OpenStreetMap are estimates like any other; `p`
+   says how far to trust them.
 
 *Name words.* Names are split into case-folded words (a trailing
 parenthesis ignored). A keyword matches a whole word or the end of a compound

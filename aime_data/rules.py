@@ -62,23 +62,29 @@ BRIDGE_WORDS = ("brücke", "bruecke", "bridge", "viadukt", "viaduct")
 P_FLOOR = {"land": 8, "infra": 8, "buildings": 10, "places": 60, "places:church": 60, "places:plant": 60,
            "places:mountain": 250}
 
-# Tower geometry (README "Tower geometry"). Tower-like points, named or not,
-# anchor buildings that contain them; buildings of 50 m or more anchor
-# places-only towers next to them.
+# Tower geometry (README "Tower geometry"). A building takes the position of
+# a tower point inside its bounding box only with evidence that the point is
+# part of it: a bell tower in a church, a minaret in a mosque, or a named
+# point whose name contains a distinctive word of the building's name
+# ("Rathausturm" in "Neues Rathaus"). Proximity alone never relocates a
+# landmark: VW Tower and the Hochhaus Lister Tor next to it are different
+# buildings.
 TOWER_POINT_CLASSES = ("observation", "bell_tower", "communication_tower", "watchtower", "minaret")
 TOWER_POINT_MAN_MADE = ("tower", "communications_tower")
 SNAP_BUILDING_KINDS = ("church", "cathedral", "chapel", "mosque", "synagogue", "temple", "monastery",
                        "castle", "tall_building", "tower")
-SNAP_PLACES_KINDS = ("tower", "communication_tower", "observation")
-TALL_ANCHOR_M = 50
-PLACES_TOWER_SNAP_M = 200
+PART_OF = {"church": ("bell_tower",), "cathedral": ("bell_tower",), "chapel": ("bell_tower",),
+           "mosque": ("minaret",)}
+# Words too generic to tie a point to a building by name.
+GENERIC_WORDS = {"neues", "neue", "neuer", "alte", "alter", "altes", "sankt", "kirche", "church", "tower",
+                 "turm", "haus", "hochhaus", "gebaeude", "building", "evangelische", "katholische"}
 # Power plants: places named ...kraftwerk / power station|plant in these
 # categories; unnamed chimneys and cooling towers of 80 m or more take the
 # name of a plant within 1 km.
 PLANT_CATEGORIES = ("power_plant", "electric_utility_provider", "campus_building", "public_utility_provider")
 PLANT_NAME = re.compile(r"kraftwerk\b|power (station|plant)", re.I)
 TALL_STACK_M = 80
-PLANT_NAMING_M = 1000
+PLANT_NAMING_M = 300
 STACK_NAMES = {"chimney": "Chimney", "cooling": "Cooling tower"}
 
 CHURCH_CLEARANCE_M = 250
@@ -127,14 +133,18 @@ def feature(name, kind, row, src, e=None, wikidata=None):
 def tower_anchor(row):
     """A tower-like infrastructure point (named or not) as a snap anchor."""
     if row.get("cls") in TOWER_POINT_CLASSES or row.get("man_made") in TOWER_POINT_MAN_MADE:
-        return {"lat": row["lat"], "lon": row["lon"], "h": num(row.get("height")) or 0, "p": uncertainty("infra", row)}
+        return {"lat": row["lat"], "lon": row["lon"], "h": num(row.get("height")) or 0, "p": uncertainty("infra", row),
+                "cls": row.get("cls"), "name": clean_name(row.get("name"))}
 
 
-def tall_anchor(row):
-    """A building of 50 m or more as a snap anchor for places-only towers."""
-    h = num(row.get("height"))
-    if h is not None and h >= TALL_ANCHOR_M:
-        return {"lat": row["lat"], "lon": row["lon"], "h": h, "p": uncertainty("buildings", row)}
+def part_of(anchor, f):
+    """Evidence that tower point `anchor` belongs to building feature `f`."""
+    if anchor["cls"] in PART_OF.get(f["kind"], ()):
+        return True
+    if anchor["name"]:
+        point = norm(anchor["name"]).replace(" ", "")
+        return any(len(w) >= 5 and w not in GENERIC_WORDS and w in point for w in norm(f["name"]).split())
+    return False
 
 
 def land(row):
@@ -261,12 +271,8 @@ def best_anchor(f, anchors):
     return min(anchors, key=lambda a: (-a["h"], metres(f, a), a["lat"], a["lon"]))
 
 
-PLACES_SNAP_P_MIN = 25  # a places point matched to a structure keeps some doubt about the match
-
-
 def snap(f, anchor, how):
-    floor = PLACES_SNAP_P_MIN if f["src"].startswith("places") else P_FLOOR["infra"]
-    f.update(lat=anchor["lat"], lon=anchor["lon"], p=max(anchor["p"], floor), snapped=how)
+    f.update(lat=anchor["lat"], lon=anchor["lon"], p=max(anchor["p"], P_FLOOR["infra"]), snapped=how)
     f["e"] = f["e"] or anchor["h"] or None
 
 
@@ -315,39 +321,28 @@ def select(rows):
     picked["places"] = kept_places
     stats["places_dropped_near_theme_twin"] = dropped
 
-    # Tower geometry: a building's visible target is the tower inside it (the
-    # Rathaus dome, a church steeple); a places-only tower sits on the tall
-    # building next to it (VW Tower → Hochhaus Lister Tor).
+    # Tower geometry: a building's visible target is the tower that belongs to
+    # it (the Rathaus dome, a church steeple), with evidence of the link.
     towers = Near(filter(None, map(tower_anchor, rows.get("infra", ()))))
-    talls = Near(filter(None, map(tall_anchor, rows.get("buildings", ()))))
-    snapped = {"building-tower": 0, "places-tall-building": 0, "places-tower": 0}
+    snapped = {"building-tower": 0}
     for f in picked["buildings"]:
         if f["kind"] in SNAP_BUILDING_KINDS and f["dx"] and f["dy"]:
             radius = min(3000, metres(f, {"lat": f["lat"] + f["dy"] / 2, "lon": f["lon"] + f["dx"] / 2}) + 1)
-            inside = [a for a in towers.all(f, radius) if inside_bbox(a, f)]
+            inside = [a for a in towers.all(f, radius) if inside_bbox(a, f) and part_of(a, f)]
             if inside:
                 snap(f, best_anchor(f, inside), "building-tower")
                 snapped["building-tower"] += 1
-    for f in picked["places"]:
-        if f["kind"] in SNAP_PLACES_KINDS:
-            near = talls.all(f, PLACES_TOWER_SNAP_M)
-            if near:
-                snap(f, best_anchor(f, near), "places-tall-building")
-                snapped["places-tall-building"] += 1
-                continue
-            near = towers.all(f, PLACES_TOWER_SNAP_M)
-            if near:
-                snap(f, best_anchor(f, near), "places-tower")
-                snapped["places-tower"] += 1
     stats["snapped"] = snapped
 
-    # Unnamed chimneys and cooling towers take the name of a plant within 1 km.
+    # Unnamed chimneys and cooling towers within 300 m of a named plant say so
+    # in their name; they keep their own position.
     plants = Near(f for f in picked["places"] if f["kind"] == "chimney")
     for f in picked["infra"]:
         if f["kind"] in STACK_NAMES and f["name"] == STACK_NAMES[f["kind"]]:
             near = plants.all(f, PLANT_NAMING_M)
             if near:
-                f["name"] = min(near, key=lambda g: (metres(f, g), g["name"]))["name"]
+                plant = min(near, key=lambda g: (metres(f, g), g["name"]))["name"]
+                f["name"] = clean_name(f"{STACK_NAMES[f['kind']]} · {plant}")
 
     # Dedupe: same normalised name within 400 m; the first by provenance wins and
     # fills its missing elevation/height and Wikidata id from the others. It
