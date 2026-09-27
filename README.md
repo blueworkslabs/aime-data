@@ -22,17 +22,22 @@ layout requires `schema: 2` and a module update.
 ```
 public/
   _headers
+  index.html        (attribution and licence page)
   v1/
     index.json
-    <release>/cells/<lat>_<lon>.json
+    <dataset>/cells/<lat>_<lon>.json
 ```
 
-- `<release>` is the Overture release, e.g. `2026-09-23.1`. Paths under a
-  release never change once published.
+- `<dataset>` is `<release>-r<revision>`: the Overture release, e.g.
+  `2026-09-23.1`, plus a data revision starting at 1. A rule fix or correction
+  that changes any byte for the same Overture release becomes the next
+  revision (`-r2`, …). A published dataset path never changes; `force` does not
+  override that, and an identical rebuild publishes nothing.
 - A cell covers `lat ≤ φ < lat+1`, `lon ≤ λ < lon+1`; names use the integer
   south-west corner, e.g. `50_8.json`, `47_-1.json`, `-34_18.json`.
 - Only non-empty cells are written; `index.json` lists them.
-- The current and the previous release are kept; older releases are removed.
+- The current and the previous dataset are kept; older ones are removed. An
+  older Overture release is never published over a newer one.
 
 ### `v1/index.json`
 
@@ -40,55 +45,79 @@ public/
 {
   "schema": 1,
   "release": "2026-09-23.1",
+  "revision": 1,
+  "dataset": "2026-09-23.1-r1",
   "built": "2026-09-27T12:00:00Z",
   "cellDeg": 1,
   "coverage": ["DE", "AT"],
-  "path": "2026-09-23.1/cells/",
+  "path": "2026-09-23.1-r1/cells/",
   "cells": ["46_9", "46_10", "47_5"],
   "license": "ODbL-1.0",
   "attribution": "© OpenStreetMap contributors, Overture Maps Foundation",
-  "kinds": { "peak": { "placementM": 8 }, "church": { "placementM": 25 } }
+  "kinds": ["bell_tower", "bridge", "castle", "…"]
 }
 ```
 
-`kinds` lists every kind that can appear, with its placement precision in
-metres. The module uses `placementM` as the landmark's position uncertainty
-in the solver.
+`kinds` is the list of every kind that can appear, for validation and labels
+only. It carries no position values: position uncertainty is per feature.
 
-### `v1/<release>/cells/<lat>_<lon>.json`
+### `v1/<dataset>/cells/<lat>_<lon>.json`
 
 ```json
 {
   "schema": 1,
   "release": "2026-09-23.1",
+  "revision": 1,
   "cell": [50, 8],
-  "f": [["Großer Feldberg", "peak", 50.23237, 8.45694, 879, 1.8]]
+  "f": [["Großer Feldberg", "peak", 50.23237, 8.45694, 879, 1.8, 8]]
 }
 ```
 
-Each feature is `[name, kind, lat, lon, e, w]`:
+A cell whose `release` or `revision` differs from the index is unavailable.
+Each feature is `[name, kind, lat, lon, e, w, p]`:
 
 | Field | Meaning |
 | --- | --- |
 | `name` | Primary name, NFC, at most 80 characters, never empty |
-| `kind` | One of the kinds below |
-| `lat`, `lon` | WGS84 degrees, 5 decimals (point or building centroid) |
+| `kind` | One of `index.kinds` (list below) |
+| `lat`, `lon` | WGS84 degrees, 5 decimals: the centre of the Overture bounding box |
 | `e` | Elevation above sea level in metres for peak/hill/volcano; structure height in metres for everything else; `0` when unknown |
 | `w` | Visibility weight, 0.5–2.0, one decimal (see below) |
+| `p` | Position uncertainty in metres, integer 5–1000 (see below). The module uses it directly as the landmark's 1σ position uncertainty (`positionM`) for marks and candidates |
 
 A cell file must stay under **1 MiB** of JSON; the build fails otherwise (the
 host caps JSON responses at 2 MiB). Features are sorted by `w` descending,
 then name, for stable diffs.
 
-### Kinds and placement precision
+### Kinds
 
-| Group | Kinds | `placementM` |
-| --- | --- | --- |
-| Terrain points | `peak`, `hill`, `volcano` | 8 |
-| Structure points | `tower`, `observation`, `communication_tower`, `mast`, `bell_tower`, `water_tower`, `watchtower`, `minaret`, `lighthouse`, `windmill`, `chimney`, `radar` | 8 |
-| Building centroids | `church`, `cathedral`, `chapel`, `mosque`, `synagogue`, `temple`, `monastery`, `castle`, `ruins`, `fort`, `tall_building`, `gasometer`, `cooling` | 25 |
-| Places-derived points | `monument`, `memorial` (and `castle`/`church` when only in places) | 30 |
-| Large structures | `bridge`, `dam` | 50 |
+Terrain: `peak`, `hill`, `volcano`. Structures: `tower`, `observation`,
+`communication_tower`, `mast`, `bell_tower`, `water_tower`, `watchtower`,
+`minaret`, `lighthouse`, `windmill`, `chimney`, `radar`. Buildings: `church`,
+`cathedral`, `chapel`, `mosque`, `synagogue`, `temple`, `monastery`, `castle`,
+`ruins`, `fort`, `tall_building`, `gasometer`, `cooling`. Others: `monument`,
+`memorial`, `bridge`, `dam`. A kind says what a landmark is, not how precisely
+it is placed.
+
+### Position uncertainty `p`
+
+`p = clamp(max(floor(source), 0.5 × half-diagonal), 5, 1000)` metres, rounded
+up. The half-diagonal is half the diagonal of the Overture bounding box
+(0 for points). The tapped part of a landmark lies inside its bbox, so the
+half-diagonal is a hard bound, and for a point spread over a box the
+cross-track RMS is about 0.3–0.4 of it: 0.5 × half-diagonal is a conservative
+1σ. Floors by the source of the kept record:
+
+| Source | Floor |
+| --- | --- |
+| `land`, `infra` (OSM via Overture base) | 8 m |
+| `buildings` (footprints) | 10 m |
+| `places` (geocoded POIs: castle, fort, monument, lighthouse, memorial, historic site, church fallback) | 60 m |
+| `places` mountain fallback | 250 m |
+
+Examples: a 60 × 25 m church ~17 m, a 300 × 200 m castle ~91 m, a 500 m
+bridge ~125 m. A merged duplicate keeps the kept record's position and `p`,
+so a merge never lowers `p`.
 
 ### Weight `w`
 
@@ -109,13 +138,15 @@ Per 1° cell, from Overture (release pinned per build):
    `tower|mast|communications_tower|lighthouse|windmill|chimney|water_tower`;
    or named with `source_tags.historic` in `castle|ruins|fort|tower`; or class
    `communication_tower|mobile_phone_tower` with height ≥ 50 m (name
-   "Communication tower"); or class `bridge` with name and Wikidata id.
+   "Communication tower"); or class `bridge` with Wikidata id and a name
+   ending in `brücke|bridge|viadukt|viaduct` (bridges often carry the
+   street's name and Wikidata id, which are not landmarks).
 3. `buildings/building`: named with class `church|cathedral|chapel|mosque|
-   synagogue|temple|monastery|castle|tower`; or named and matching
-   `schloss|burg|castle|palace|palais|festung|kloster|abtei` (case-insensitive);
-   or height ≥ 80 m (name "Tall building" when unnamed).
+   synagogue|temple|monastery|castle|tower`; or named with a castle word
+   (see *Name words* below) from `schloss|burg|castle|palace|palais|festung|
+   kloster|abtei`; or height ≥ 80 m (name "Tall building" when unnamed).
 4. `places/place`, named: `castle|fort|monument|lighthouse|memorial_site` with
-   confidence ≥ 0.6; `historic_site` with confidence ≥ 0.6 and a name matching
+   confidence ≥ 0.6; `historic_site` with confidence ≥ 0.6 and a name word from
    `burg|schloss|castle|turm|tower|warte|kastell|ruine|ruin|fort|kloster|abbey|abtei`;
    `christian_place_of_worship` with confidence ≥ 0.7 **only if no buildings-theme
    church lies within 250 m**; `mountain` with confidence ≥ 0.8 **only if no
@@ -124,6 +155,18 @@ Per 1° cell, from Overture (release pinned per build):
    spaces) within 400 m merges into one feature; keep the first by provenance
    land > infrastructure > buildings > places and fill missing `e`/Wikidata
    from the others.
+
+*Name words.* Names are split into case-folded words (a trailing
+parenthesis ignored). A keyword matches a whole word or the end of a compound
+(`Wasserschloss`, `Bismarckwarte`), never a prefix or the middle of a word, so
+"Schlosserei", "Burger King" and "Schlossstraße" stay out. A word merely ending
+in `burg` counts only when it is the whole name (`Marienburg`), because German
+place names end in -burg: "Bahnhof Nienburg" and "Amtsgericht Burgwedel" stay
+out. The kind follows the keyword: castle words → `castle`,
+`festung|kastell|fort` → `fort`, `ruine|ruin` → `ruins`,
+`kloster|abbey|abtei` → `monastery`, `turm|tower|warte` → `tower`. Plain
+substrings, as first written, made 278 of 1,899 features in cell 52_9 "castles",
+mostly shops and offices; words bring it to 95 real ones.
 
 Excluded on purpose: viewpoints (places to stand, not targets), generic
 tourist attractions, sports venues.
@@ -135,14 +178,19 @@ tourist attractions, sports venues.
   (`https://stac.overturemaps.org/<release>/<theme>/<type>/collection.json`)
   intersects the coverage; never scan a whole theme.
 - Coverage cells: all 1° cells intersecting the DE or AT country polygons from
-  Overture `divisions/division_area` of the same release.
+  Overture `divisions/division_area` of the same release (class `land`).
+- Positions are Overture bounding-box centres, which are exact for points but
+  not polygon centroids; the bbox extent and the source give `p` (above).
+  This keeps the large `geometry` column out of every download except the
+  country polygons.
 - Output to `public/`, validate every file against this contract (schema,
   kinds, bounds, size, sorting) and the whole set against `index.json`.
 - Publish by force-pushing the contents of `public/` to the orphan branch
   `pages`, which Cloudflare Pages deploys (no build command, output = branch
   root). History on `pages` is never kept, so the repository does not grow.
-- Schedule: monthly GitHub Actions run a few days after each Overture release,
-  plus manual dispatch. A build that fails validation publishes nothing.
+- Schedule: a weekly GitHub Actions check builds within a week of each
+  monthly Overture release, plus manual dispatch. A build that fails
+  validation publishes nothing.
 
 `public/_headers`:
 
@@ -154,6 +202,33 @@ tourist attractions, sports venues.
   Cache-Control: public, max-age=31536000, immutable
   Access-Control-Allow-Origin: *
 ```
+
+### Running it
+
+```
+pip install -r requirements.txt            # DuckDB 1.5.5
+python -m unittest discover -s tests -t .  # rules, cell writer, validator
+python -m aime_data.build --cells 52_9     # one cell, for a local check
+python -m aime_data.build                  # full build, latest release
+python -m aime_data.validate public
+scripts/publish.sh public --dry-run
+```
+
+`work/` caches the extracts per release, so a re-run after a rule change
+re-selects without downloading. The build writes `work/report.md` and
+`work/report.json`: counts per theme and kind, the largest cell, the spread of
+`p`, and which of
+the known landmarks in `aime_data/landmarks.py` (the spike's lists plus
+Hannover) are present. A missing known landmark is a warning for review, not
+a failure. `scripts/publish.sh` keeps the previously published
+dataset and drops older ones (`aime_data/publish.py` plans it): an identical
+rebuild is a no-op, changed bytes for a published Overture release become the
+next revision, and an older release is refused.
+
+GitHub Actions (`.github/workflows/build.yml`): unit tests on every push and
+pull request; a one-cell smoke build against Overture on pull requests; the
+publish job runs on manual dispatch (optional release, optional force) and
+weekly, building only when Overture's latest release is not on `pages` yet.
 
 ## Privacy
 
