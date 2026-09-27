@@ -69,11 +69,18 @@ only. It carries no position values: position uncertainty is per feature.
   "release": "2026-09-23.1",
   "revision": 1,
   "cell": [50, 8],
+  "declination": 3.8,
   "f": [["Großer Feldberg", "peak", 50.23237, 8.45694, 879, 1.8, 8]]
 }
 ```
 
 A cell whose `release` or `revision` differs from the index is unavailable.
+`declination` (additive, 2026-09-27) is the magnetic declination at the cell
+centre in degrees east of true north, one decimal: WMM2025 at sea level, with
+the Overture release date as the epoch so identical rebuilds stay identical.
+The Aimé module takes it from the viewpoint's cell to turn the phone's magnetic
+compass hint into a true bearing, and skips the heading when it is absent;
+clients must accept cells without it and ignore it when they don't use it.
 Each feature is `[name, kind, lat, lon, e, w, p]`:
 
 | Field | Meaning |
@@ -206,7 +213,7 @@ tourist attractions, sports venues.
 ### Running it
 
 ```
-pip install -r requirements.txt            # DuckDB 1.5.5
+pip install -r requirements.txt            # DuckDB 1.5.5, pygeomag 1.1.0 (WMM)
 python -m unittest discover -s tests -t .  # rules, cell writer, validator
 python -m aime_data.build --cells 52_9     # one cell, for a local check
 python -m aime_data.build                  # full build, latest release
